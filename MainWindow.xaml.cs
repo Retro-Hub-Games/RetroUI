@@ -37,6 +37,7 @@ namespace RetroUI
         private const string AppName = "RetroHub";
         private const string RegistryKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         private SettingsPage settingsPage;
+        private SteamGameMonitor gameMonitor;
 
         public ObservableCollection<AppInfo> InstalledApps { get; set; }
 
@@ -48,14 +49,46 @@ namespace RetroUI
                 if (currentlyPlaying != value)
                 {
                     currentlyPlaying = value;
+                    IsGameRunning = value != null; // Update IsGameRunning based on NowPlaying
                     OnPropertyChanged(nameof(NowPlaying));
-                    OnPropertyChanged(nameof(IsGameRunning));
-                    Debug.WriteLine($"Game running state changed: {IsGameRunning}, Game: {value?.Name ?? "None"}");
                 }
             }
         }
         
-        public bool IsGameRunning => NowPlaying != null;
+        private bool _isGameRunning;
+        public bool IsGameRunning
+        {
+            get => _isGameRunning;
+            set
+            {
+                if (_isGameRunning != value)
+                {
+                    _isGameRunning = value;
+                    OnPropertyChanged(nameof(IsGameRunning));
+                }
+            }
+        }
+
+        private struct GamepadState
+        {
+            public short LeftThumbX;
+            public GamepadButtonFlags Buttons;
+
+            public static GamepadState FromGamepad(Gamepad gamepad)
+            {
+                return new GamepadState
+                {
+                    LeftThumbX = gamepad.LeftThumbX,
+                    Buttons = gamepad.Buttons
+                };
+            }
+
+            public bool Equals(GamepadState other)
+            {
+                return LeftThumbX == other.LeftThumbX && 
+                       Buttons == other.Buttons;
+            }
+        }
 
         public MainWindow()
         {
@@ -91,6 +124,7 @@ namespace RetroUI
             
             // Set up auto-start
             SetupAutoStart();
+            gameMonitor = new SteamGameMonitor();
         }
 
         private void InitializeGamepad()
@@ -107,69 +141,64 @@ namespace RetroUI
 
         private async Task GamepadPollingLoop()
         {
+            const int pollDelay = 16; // Approximately 60Hz refresh rate
+            var lastState = new GamepadState();
+
             while (isGamepadInitialized)
             {
-                if (controller.IsConnected && !IsGameRunning)  // Only process input if no game is running
+                if (controller.IsConnected && !IsGameRunning)
                 {
-                    var state = controller.GetState();
+                    var gamepad = controller.GetState().Gamepad;
+                    var currentState = GamepadState.FromGamepad(gamepad);
                     
-                    // Handle thumbstick movement
-                    if (state.Gamepad.LeftThumbX > 20000) // Right movement
+                    // Only process input if the state has changed
+                    if (!currentState.Equals(lastState))
                     {
-                        await Dispatcher.InvokeAsync(() => MoveSelection(1));
-                    }
-                    else if (state.Gamepad.LeftThumbX < -20000) // Left movement
-                    {
-                        await Dispatcher.InvokeAsync(() => MoveSelection(-1));
-                    }
-
-                    // Handle A button press
-                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.A))
-                    {
-                        await Dispatcher.InvokeAsync(LaunchSelectedApp);
-                    }
-
-                    // Handle Y button press for search
-                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.Y))
-                    {
-                        await Dispatcher.InvokeAsync(ToggleSearch);
-                    }
-
-                    // Handle B button press for ROM library
-                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
-                    {
-                        await Dispatcher.InvokeAsync(() => 
+                        await Dispatcher.InvokeAsync(() =>
                         {
-                            if (MainContent.Visibility == Visibility.Visible)
+                            // Handle thumbstick movement
+                            if (gamepad.LeftThumbX > 20000) // Right movement
                             {
-                                var romHome = new RomHome(this);
-                                NavigateToRomHome(romHome);
+                                MoveSelection(1);
                             }
-                            else if (MainFrame.Content is RomHome)
+                            else if (gamepad.LeftThumbX < -20000) // Left movement
                             {
-                                NavigateToMain();
+                                MoveSelection(-1);
+                            }
+
+                            // Handle buttons
+                            if (gamepad.Buttons.HasFlag(GamepadButtonFlags.A))
+                            {
+                                LaunchSelectedApp();
+                            }
+                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Y))
+                            {
+                                ToggleSearch();
+                            }
+                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
+                            {
+                                if (MainContent.Visibility == Visibility.Visible)
+                                {
+                                    var romHome = new RomHome(this);
+                                    NavigateToRomHome(romHome);
+                                }
+                                else if (MainFrame.Content is RomHome)
+                                {
+                                    NavigateToMain();
+                                }
+                            }
+                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Start))
+                            {
+                                PowerMenuOverlay.Visibility = PowerMenuOverlay.Visibility == Visibility.Collapsed ? 
+                                    Visibility.Visible : Visibility.Collapsed;
                             }
                         });
-                    }
 
-                    // Handle Start button for power menu
-                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.Start))
-                    {
-                        await Dispatcher.InvokeAsync(() => 
-                        {
-                            if (PowerMenuOverlay.Visibility == Visibility.Collapsed)
-                            {
-                                PowerMenuOverlay.Visibility = Visibility.Visible;
-                            }
-                            else
-                            {
-                                PowerMenuOverlay.Visibility = Visibility.Collapsed;
-                            }
-                        });
+                        lastState = currentState;
                     }
                 }
                 
-                await Task.Delay(100); // Poll every 100ms
+                await Task.Delay(pollDelay);
             }
         }
 
@@ -222,121 +251,20 @@ namespace RetroUI
                     if (process != null)
                     {
                         NowPlaying = app;
-                        process.EnableRaisingEvents = true;
+                        IsGameRunning = true;
+                        isGamepadInitialized = false; // Disable gamepad input
 
-                        // Start monitoring for game processes immediately
-                        Task.Run(async () =>
+                        // Start monitoring the game process
+                        gameMonitor.StartMonitoring(process, () =>
                         {
-                            var appName = System.IO.Path.GetFileNameWithoutExtension(app.Path).ToLower();
-                            var steamAppId = GetSteamAppId(app.Path);
-                            var initialProcessId = process.Id;
-                            bool gameFullyStarted = false;
-                            var processCheckCount = 0;
-                            var antiCheatProcessNames = new[] { "easyanticheat", "battleye", "vanguard", "faceit", "punkbuster", "xigncode", "nprotect", "eac", "be" };
-                            bool hasAntiCheat = false;
-
-                            while (true)
+                            // This will be called when the game closes
+                            Dispatcher.Invoke(() =>
                             {
-                                await Task.Delay(1000); // Check every second
-
-                                try
-                                {
-                                    var currentProcesses = Process.GetProcesses()
-                                        .Where(p => {
-                                            try {
-                                                if (p.Id == initialProcessId) return true;
-                                                var processName = p.ProcessName.ToLower();
-                                                var fileName = p.MainModule?.FileName.ToLower() ?? "";
-                                                
-                                                // Check for anti-cheat processes first
-                                                bool isAntiCheat = antiCheatProcessNames.Any(ac => processName.Contains(ac));
-                                                if (isAntiCheat)
-                                                {
-                                                    hasAntiCheat = true;
-                                                    return true;
-                                                }
-                                                
-                                                // Then check for game processes
-                                                return fileName.Contains(appName) || 
-                                                       (steamAppId != null && fileName.Contains(steamAppId));
-                                            }
-                                            catch { return false; }
-                                        }).ToList();
-
-                                    // If we find a process with a main window, the game has started
-                                    var gameProcess = currentProcesses.FirstOrDefault(p => {
-                                        try { 
-                                            return p.MainWindowHandle != IntPtr.Zero && 
-                                                   !antiCheatProcessNames.Any(ac => p.ProcessName.ToLower().Contains(ac)); 
-                                        }
-                                        catch { return false; }
-                                    });
-
-                                    if (gameProcess != null)
-                                    {
-                                        gameFullyStarted = true;
-                                        processCheckCount = 0; // Reset counter when we see the game
-                                    }
-
-                                    // If no processes are found, increment counter
-                                    if (!currentProcesses.Any())
-                                    {
-                                        processCheckCount++;
-                                    }
-                                    else
-                                    {
-                                        // Check if only anti-cheat processes remain
-                                        var onlyAntiCheatRemains = currentProcesses.All(p => {
-                                            try {
-                                                return antiCheatProcessNames.Any(ac => 
-                                                    p.ProcessName.ToLower().Contains(ac));
-                                            }
-                                            catch { return false; }
-                                        });
-
-                                        if (gameFullyStarted && onlyAntiCheatRemains)
-                                        {
-                                            processCheckCount++;
-                                        }
-                                        else
-                                        {
-                                            processCheckCount = 0; // Reset if game processes still exist
-                                        }
-                                    }
-
-                                    // End monitoring if:
-                                    // 1. Game has fully started and no processes remain for longer period if anti-cheat was detected
-                                    // 2. No processes found for extended period
-                                    int requiredChecks = hasAntiCheat ? 15 : 5; // Wait longer if anti-cheat was detected
-                                    if ((gameFullyStarted && processCheckCount >= requiredChecks) || processCheckCount >= 20)
-                                    {
-                                        await Dispatcher.InvokeAsync(() =>
-                                        {
-                                            NowPlaying = null;
-                                            Debug.WriteLine($"Game closed: {app.Name} (Anti-cheat: {hasAntiCheat})");
-                                        });
-                                        break;
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.WriteLine($"Error monitoring processes: {ex.Message}");
-                                    processCheckCount++;
-                                    
-                                    // If we've had errors for several checks, assume the game is closed
-                                    // Wait longer if anti-cheat was detected
-                                    int requiredErrorChecks = hasAntiCheat ? 15 : 10;
-                                    if (processCheckCount >= requiredErrorChecks)
-                                    {
-                                        await Dispatcher.InvokeAsync(() =>
-                                        {
-                                            NowPlaying = null;
-                                            Debug.WriteLine($"Game assumed closed after errors: {app.Name} (Anti-cheat: {hasAntiCheat})");
-                                        });
-                                        break;
-                                    }
-                                }
-                            }
+                                NowPlaying = null;
+                                IsGameRunning = false;
+                                isGamepadInitialized = true; // Re-enable gamepad input
+                                InitializeGamepad(); // Reinitialize gamepad
+                            });
                         });
                     }
                 }
@@ -345,6 +273,9 @@ namespace RetroUI
                     MessageBox.Show($"Failed to launch {app.Name}: {ex.Message}", 
                         "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     NowPlaying = null;
+                    IsGameRunning = false;
+                    isGamepadInitialized = true;
+                    InitializeGamepad();
                 }
             }
         }
@@ -847,9 +778,9 @@ namespace RetroUI
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged(string name)
+        protected void OnPropertyChanged(string propertyName)
         {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
         public void NavigateToRomHome(RomHome romHome)
