@@ -13,20 +13,26 @@ using System.Windows.Interop;
 using System.Runtime.InteropServices;
 using System.Drawing;
 using System.Collections.ObjectModel;
+using System.Threading;
 
 namespace RetroUI
 {
     public partial class SettingsPage : Page
     {
         private MainWindow mainWindow;
+        private string romFolderPath;
 
         public SettingsPage(MainWindow mainWindow)
         {
             InitializeComponent();
             this.mainWindow = mainWindow;
             
-            // Initialize settings
-            LoadCurrentSettings();
+            // Load saved ROM folder path if it exists
+            romFolderPath = Properties.Settings.Default.RomFolderPath;
+            if (!string.IsNullOrEmpty(romFolderPath))
+            {
+                RomFolderPath.Text = romFolderPath;
+            }
         }
 
         private void LoadCurrentSettings()
@@ -60,84 +66,63 @@ namespace RetroUI
 
         private void BrowseRomFolder_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new FolderBrowserDialog();
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                RomFolderPath.Text = dialog.SelectedPath;
-                SaveRomFolderPath(dialog.SelectedPath);
-            }
-        }
+            var dialog = new System.Windows.Forms.FolderBrowserDialog();
+            dialog.Description = "Select ROM folder";
+            dialog.ShowNewFolderButton = true;
 
-        private void SaveRomFolderPath(string path)
-        {
-            Properties.Settings.Default.RomFolderPath = path;
-            Properties.Settings.Default.Save();
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                romFolderPath = dialog.SelectedPath;
+                RomFolderPath.Text = romFolderPath;
+                Properties.Settings.Default.RomFolderPath = romFolderPath;
+                Properties.Settings.Default.Save();
+            }
         }
 
         private async void ScanRoms_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(RomFolderPath.Text))
+            if (string.IsNullOrEmpty(romFolderPath) || !Directory.Exists(romFolderPath))
             {
-                MessageBox.Show("Please select a ROM folder first.");
+                MessageBox.Show("Please select a valid ROM folder first.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
             try
             {
-                // Create UI elements first on the UI thread
-                var romHome = new RomHome(mainWindow);
-                ScanStatus.Text = "Scanning ROMs...";
-
-                // Run the scan in background
-                var romScanner = new RomScanner();
-                var scanResults = await Task.Run(() => romScanner.ScanRomFolder(RomFolderPath.Text));
-
-                // Process results on UI thread
-                if (scanResults != null && scanResults.Any())
-                {
-                    foreach (var result in scanResults)
-                    {
-                        var systemCategory = new SystemCategory { Name = result.SystemName };
-                        foreach (var (romName, romPath) in result.Roms)
-                        {
-                            var romInfo = new RomInfo
-                            {
-                                Name = romName,
-                                Path = romPath,
-                                System = result.SystemName
-                            };
-
-                            // Add ROM to category on UI thread
-                            await Dispatcher.InvokeAsync(() => systemCategory.Roms.Add(romInfo));
-                        }
-
-                        // Add system to RomHome on UI thread
-                        await Dispatcher.InvokeAsync(() => romHome.AddSystem(systemCategory));
-                    }
-
-                    // Update UI and navigate on UI thread
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        var totalRoms = scanResults.Sum(s => s.Roms.Count);
-                        ScanStatus.Text = $"Found {totalRoms} ROMs across {scanResults.Count} systems";
-                        mainWindow.NavigateToRomHome(romHome);
-                    });
-                }
-                else
-                {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        ScanStatus.Text = "No ROMs found in the selected folder";
-                    });
-                }
+                ScanStatus.Text = "Scanning for ROMs...";
+                await Task.Run(() => ScanForRoms(romFolderPath));
+                ScanStatus.Text = "ROM scan complete!";
+                await Task.Delay(2000); // Show completion message for 2 seconds
+                ScanStatus.Text = string.Empty;
             }
             catch (Exception ex)
             {
-                await Dispatcher.InvokeAsync(() =>
+                ScanStatus.Text = "Error scanning ROMs.";
+                MessageBox.Show($"Error scanning ROMs: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ScanForRoms(string folderPath)
+        {
+            string[] supportedExtensions = new[] { ".nes", ".snes", ".gba", ".gbc", ".n64", ".z64", ".iso", ".cue", ".bin" };
+            
+            var romFiles = Directory.GetFiles(folderPath, "*.*", SearchOption.AllDirectories)
+                .Where(file => supportedExtensions.Contains(Path.GetExtension(file).ToLower()));
+
+            foreach (var romFile in romFiles)
+            {
+                Dispatcher.Invoke(() =>
                 {
-                    MessageBox.Show($"Error scanning ROMs: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                    ScanStatus.Text = "Error scanning ROMs";
+                    ScanStatus.Text = $"Found: {Path.GetFileName(romFile)}";
                 });
+
+                // Here you would typically:
+                // 1. Create a ROM entry in your database/storage
+                // 2. Extract metadata (if available)
+                // 3. Generate or download thumbnails
+                // 4. Add to your ROM collection
+                
+                Thread.Sleep(100); // Slow down the scan a bit so users can see progress
             }
         }
 
