@@ -16,8 +16,10 @@ namespace RetroUI
         private MainWindow mainWindow;
         private readonly Dispatcher _dispatcher;
         public ObservableCollection<SystemCategory> Systems { get; private set; }
-        private Controller controller;
-        private bool isGamepadInitialized;
+        private Controller xboxController;
+        private SwitchProController switchController;
+        private bool usingSwitchController = false;
+        private bool isGamepadInitialized = false;
 
         public RomHome(MainWindow mainWindow)
         {
@@ -41,32 +43,69 @@ namespace RetroUI
 
         private void InitializeGamepad()
         {
-            controller = new Controller(UserIndex.One);
-            isGamepadInitialized = controller.IsConnected;
+            xboxController = new Controller(UserIndex.One);
+            switchController = new SwitchProController();
+            
+            if (xboxController.IsConnected)
+            {
+                isGamepadInitialized = true;
+                usingSwitchController = false;
+            }
+            else if (switchController.IsConnected)
+            {
+                isGamepadInitialized = true;
+                usingSwitchController = true;
+            }
             
             if (isGamepadInitialized)
             {
-                // Start polling for gamepad input
                 Task.Run(GamepadPollingLoop);
             }
         }
 
         private async Task GamepadPollingLoop()
         {
+            const int pollDelay = 32;
+            const int movementDelay = 150;
+            var lastMoveTime = DateTime.Now;
+
             while (isGamepadInitialized)
             {
-                if (controller.IsConnected && !mainWindow.IsGameRunning)
+                if (usingSwitchController)
                 {
-                    var state = controller.GetState();
-
-                    // Handle B button press to return to main window
-                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
+                    switchController.Update();
+                    if (switchController.IsConnected)
                     {
-                        await _dispatcher.InvokeAsync(() => mainWindow.NavigateToMain());
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            var now = DateTime.Now;
+                            // Handle Switch Pro Controller navigation
+                            if ((now - lastMoveTime).TotalMilliseconds >= movementDelay)
+                            {
+                                if (switchController.Buttons.HasFlag(SwitchProButtons.B))
+                                {
+                                    mainWindow.NavigateToMain();
+                                }
+                                // Add more Switch Pro Controller specific navigation here
+                                lastMoveTime = now;
+                            }
+                        });
                     }
                 }
+                else if (xboxController.IsConnected)
+                {
+                    var state = xboxController.GetState();
+                    if (state.Gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            mainWindow.NavigateToMain();
+                        });
+                    }
+                    // Add more Xbox controller specific navigation here
+                }
                 
-                await Task.Delay(100); // Poll every 100ms
+                await Task.Delay(pollDelay);
             }
         }
 
@@ -149,6 +188,11 @@ namespace RetroUI
         {
             isGamepadInitialized = false;
             this.Unloaded -= RomHome_Unloaded;
+        }
+
+        public void Dispose()
+        {
+            isGamepadInitialized = false;
         }
     }
 

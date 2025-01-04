@@ -19,6 +19,7 @@ using System.ComponentModel;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Pen = System.Windows.Media.Pen;
 
 namespace RetroUI
 {
@@ -38,6 +39,10 @@ namespace RetroUI
         private const string RegistryKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         private SettingsPage settingsPage;
         private SteamGameMonitor gameMonitor;
+        private SwitchProController switchController;
+        private bool usingSwitchController = false;
+        private PlayStationController psController;
+        private bool usingPlayStationController = false;
 
         public ObservableCollection<AppInfo> InstalledApps { get; set; }
 
@@ -129,53 +134,130 @@ namespace RetroUI
 
         private void InitializeGamepad()
         {
-            controller = new Controller(UserIndex.One);
-            isGamepadInitialized = controller.IsConnected;
-            
-            if (isGamepadInitialized)
+            try
             {
-                // Start polling for gamepad input
-                Task.Run(GamepadPollingLoop);
+                controller = new Controller(UserIndex.One);
+                switchController = new SwitchProController();
+                psController = new PlayStationController();
+                
+                var controllerCheckTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(1)
+                };
+                
+                controllerCheckTimer.Tick += (s, e) =>
+                {
+                    // Check for PlayStation controller first
+                    if (psController.IsConnected && !usingPlayStationController && !usingSwitchController)
+                    {
+                        usingPlayStationController = true;
+                        usingSwitchController = false;
+                        isGamepadInitialized = true;
+                        Debug.WriteLine("Switched to PlayStation Controller");
+                        Task.Run(GamepadPollingLoop);
+                    }
+                    // Then check for Switch Pro controller
+                    else if (switchController.IsConnected && !usingSwitchController && !usingPlayStationController)
+                    {
+                        usingSwitchController = true;
+                        usingPlayStationController = false;
+                        isGamepadInitialized = true;
+                        Debug.WriteLine("Switched to Switch Pro Controller");
+                        Task.Run(GamepadPollingLoop);
+                    }
+                    // Finally check for Xbox controller
+                    else if (controller.IsConnected && (usingSwitchController || usingPlayStationController))
+                    {
+                        usingSwitchController = false;
+                        usingPlayStationController = false;
+                        isGamepadInitialized = true;
+                        Debug.WriteLine("Switched to Xbox Controller");
+                        Task.Run(GamepadPollingLoop);
+                    }
+                    // If no controller is connected
+                    else if (!controller.IsConnected && !switchController.IsConnected && !psController.IsConnected)
+                    {
+                        isGamepadInitialized = false;
+                        Debug.WriteLine("No controllers connected");
+                    }
+                };
+                
+                controllerCheckTimer.Start();
+                
+                // Initial controller check
+                if (psController.IsConnected)
+                {
+                    usingPlayStationController = true;
+                    isGamepadInitialized = true;
+                    Debug.WriteLine("PlayStation controller connected initially");
+                }
+                else if (switchController.IsConnected)
+                {
+                    usingSwitchController = true;
+                    isGamepadInitialized = true;
+                    Debug.WriteLine("Switch Pro controller connected initially");
+                }
+                else if (controller.IsConnected)
+                {
+                    isGamepadInitialized = true;
+                    Debug.WriteLine("Xbox controller connected initially");
+                }
+                
+                if (isGamepadInitialized)
+                {
+                    Task.Run(GamepadPollingLoop);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error initializing gamepad: {ex.Message}");
+                isGamepadInitialized = false;
             }
         }
 
         private async Task GamepadPollingLoop()
         {
-            const int pollDelay = 16; // Approximately 60Hz refresh rate
+            const int pollDelay = 32; // Reduced polling rate (about 30Hz instead of 60Hz)
+            const int movementDelay = 150; // Add delay between movements (in milliseconds)
             var lastState = new GamepadState();
+            var lastMoveTime = DateTime.Now;
 
             while (isGamepadInitialized)
             {
-                if (controller.IsConnected && !IsGameRunning)
+                if (!IsGameRunning)
                 {
-                    var gamepad = controller.GetState().Gamepad;
-                    var currentState = GamepadState.FromGamepad(gamepad);
-                    
-                    // Only process input if the state has changed
-                    if (!currentState.Equals(lastState))
+                    if (usingPlayStationController && psController.IsConnected)
                     {
                         await Dispatcher.InvokeAsync(() =>
                         {
-                            // Handle thumbstick movement
-                            if (gamepad.LeftThumbX > 20000) // Right movement
+                            var now = DateTime.Now;
+                            // Handle PlayStation Controller input
+                            if (psController.LeftThumbX > 20000 || psController.LeftThumbX < -20000)
                             {
-                                MoveSelection(1);
-                            }
-                            else if (gamepad.LeftThumbX < -20000) // Left movement
-                            {
-                                MoveSelection(-1);
+                                if ((now - lastMoveTime).TotalMilliseconds >= movementDelay)
+                                {
+                                    if (psController.LeftThumbX > 20000)
+                                    {
+                                        MoveSelection(1);
+                                    }
+                                    else if (psController.LeftThumbX < -20000)
+                                    {
+                                        MoveSelection(-1);
+                                    }
+                                    lastMoveTime = now;
+                                }
                             }
 
-                            // Handle buttons
-                            if (gamepad.Buttons.HasFlag(GamepadButtonFlags.A))
+                            // Map PlayStation buttons to actions
+                            if (psController.Buttons.HasFlag(PSButtons.Cross))
                             {
                                 LaunchSelectedApp();
                             }
-                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Y))
+                            else if (psController.Buttons.HasFlag(PSButtons.Triangle))
                             {
                                 ToggleSearch();
                             }
-                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
+                            else if (psController.Buttons.HasFlag(PSButtons.Circle))
                             {
                                 if (MainContent.Visibility == Visibility.Visible)
                                 {
@@ -187,14 +269,124 @@ namespace RetroUI
                                     NavigateToMain();
                                 }
                             }
-                            else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Start))
+                            else if (psController.Buttons.HasFlag(PSButtons.Options))
                             {
                                 PowerMenuOverlay.Visibility = PowerMenuOverlay.Visibility == Visibility.Collapsed ? 
                                     Visibility.Visible : Visibility.Collapsed;
                             }
                         });
+                    }
+                    else if (usingSwitchController)
+                    {
+                        switchController.Update();
+                        if (switchController.IsConnected)
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                var now = DateTime.Now;
+                                // Handle Switch Pro Controller input
+                                if (switchController.LeftThumbX > 20000 || switchController.LeftThumbX < -20000)
+                                {
+                                    if ((now - lastMoveTime).TotalMilliseconds >= movementDelay)
+                                    {
+                                        if (switchController.LeftThumbX > 20000)
+                                        {
+                                            MoveSelection(1);
+                                        }
+                                        else if (switchController.LeftThumbX < -20000)
+                                        {
+                                            MoveSelection(-1);
+                                        }
+                                        lastMoveTime = now;
+                                    }
+                                }
 
-                        lastState = currentState;
+                                // Map Switch Pro buttons to actions
+                                if (switchController.Buttons.HasFlag(SwitchProButtons.A))
+                                {
+                                    LaunchSelectedApp();
+                                }
+                                else if (switchController.Buttons.HasFlag(SwitchProButtons.X))
+                                {
+                                    ToggleSearch();
+                                }
+                                else if (switchController.Buttons.HasFlag(SwitchProButtons.B))
+                                {
+                                    if (MainContent.Visibility == Visibility.Visible)
+                                    {
+                                        var romHome = new RomHome(this);
+                                        NavigateToRomHome(romHome);
+                                    }
+                                    else if (MainFrame.Content is RomHome)
+                                    {
+                                        NavigateToMain();
+                                    }
+                                }
+                                else if (switchController.Buttons.HasFlag(SwitchProButtons.Plus))
+                                {
+                                    PowerMenuOverlay.Visibility = PowerMenuOverlay.Visibility == Visibility.Collapsed ? 
+                                        Visibility.Visible : Visibility.Collapsed;
+                                }
+                            });
+                        }
+                    }
+                    else if (controller.IsConnected)
+                    {
+                        var gamepad = controller.GetState().Gamepad;
+                        var currentState = GamepadState.FromGamepad(gamepad);
+                        
+                        if (!currentState.Equals(lastState))
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                var now = DateTime.Now;
+                                // Handle thumbstick movement with delay
+                                if (gamepad.LeftThumbX > 20000 || gamepad.LeftThumbX < -20000)
+                                {
+                                    if ((now - lastMoveTime).TotalMilliseconds >= movementDelay)
+                                    {
+                                        if (gamepad.LeftThumbX > 20000)
+                                        {
+                                            MoveSelection(1);
+                                        }
+                                        else if (gamepad.LeftThumbX < -20000)
+                                        {
+                                            MoveSelection(-1);
+                                        }
+                                        lastMoveTime = now;
+                                    }
+                                }
+
+                                // Handle buttons
+                                if (gamepad.Buttons.HasFlag(GamepadButtonFlags.A))
+                                {
+                                    LaunchSelectedApp();
+                                }
+                                else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Y))
+                                {
+                                    ToggleSearch();
+                                }
+                                else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
+                                {
+                                    if (MainContent.Visibility == Visibility.Visible)
+                                    {
+                                        var romHome = new RomHome(this);
+                                        NavigateToRomHome(romHome);
+                                    }
+                                    else if (MainFrame.Content is RomHome)
+                                    {
+                                        NavigateToMain();
+                                    }
+                                }
+                                else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Start))
+                                {
+                                    PowerMenuOverlay.Visibility = PowerMenuOverlay.Visibility == Visibility.Collapsed ? 
+                                        Visibility.Visible : Visibility.Collapsed;
+                                }
+                            });
+
+                            lastState = currentState;
+                        }
                     }
                 }
                 
@@ -467,13 +659,13 @@ namespace RetroUI
                 // Only process files larger than 5MB (to skip small utility executables)
                 if (fileInfo.Length < 5000000) return;
 
-                var icon = GetAppIcon(exePath);
-                if (icon != null)
+                var boxArt = GetGameBoxArt(exePath);
+                if (boxArt != null)
                 {
                     var appInfo = new AppInfo
                     {
                         Name = Path.GetFileNameWithoutExtension(exePath),
-                        Icon = icon,
+                        Icon = boxArt,
                         Path = exePath
                     };
 
@@ -555,6 +747,107 @@ namespace RetroUI
                 Debug.WriteLine($"Error extracting icon from {exePath}: {ex.Message}");
             }
             return null;
+        }
+
+        private BitmapSource GetGameBoxArt(string gamePath)
+        {
+            try
+            {
+                // First try to find a local box art image
+                string gameDir = Path.GetDirectoryName(gamePath);
+                string gameName = Path.GetFileNameWithoutExtension(gamePath);
+                
+                // Common box art file names
+                string[] possibleImageNames = new[]
+                {
+                    "cover.jpg", "cover.png",
+                    "box.jpg", "box.png",
+                    "boxart.jpg", "boxart.png",
+                    gameName + ".jpg", gameName + ".png",
+                    "folder.jpg", "folder.png"
+                };
+
+                // Check for existing box art in the game directory
+                foreach (string imageName in possibleImageNames)
+                {
+                    string imagePath = Path.Combine(gameDir, imageName);
+                    if (File.Exists(imagePath))
+                    {
+                        using (var bitmap = new System.Drawing.Bitmap(imagePath))
+                        {
+                            // Create a high-quality resized version
+                            using (var resized = new System.Drawing.Bitmap(200, 250))
+                            {
+                                using (var graphics = System.Drawing.Graphics.FromImage(resized))
+                                {
+                                    graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                    graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                                    graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                                    graphics.DrawImage(bitmap, 0, 0, 200, 250);
+
+                                    var handle = resized.GetHbitmap();
+                                    try
+                                    {
+                                        return Imaging.CreateBitmapSourceFromHBitmap(
+                                            handle,
+                                            IntPtr.Zero,
+                                            Int32Rect.Empty,
+                                            BitmapSizeOptions.FromWidthAndHeight(200, 250));
+                                    }
+                                    finally
+                                    {
+                                        DeleteObject(handle);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If no box art found, fall back to app icon but resize it to box art dimensions
+                var icon = GetAppIcon(gamePath);
+                if (icon != null)
+                {
+                    var transform = new ScaleTransform(1.5, 2); // Make the icon larger to fit box art dimensions
+                    var transformed = new TransformedBitmap(icon, transform);
+                    return transformed;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error loading box art for {gamePath}: {ex.Message}");
+            }
+
+            // If all else fails, return a default box art
+            return CreateDefaultBoxArt();
+        }
+
+        private BitmapSource CreateDefaultBoxArt()
+        {
+            // Create a default box art with game name
+            var drawingVisual = new DrawingVisual();
+            using (var drawingContext = drawingVisual.RenderOpen())
+            {
+                // Draw background
+                drawingContext.DrawRectangle(
+                    new LinearGradientBrush(
+                        Colors.DarkGray, Colors.Black, 
+                        new Point(0, 0), new Point(0, 1)),
+                    null,
+                    new Rect(0, 0, 200, 250));
+                
+                // Draw game controller icon
+                var geometry = Geometry.Parse("M24 6h-6v4h-4v6h4v4h6v-4h4v-6h-4zm-2 12h-2v-4h-4v-2h4v-4h2v4h4v2h-4z");
+                drawingContext.DrawGeometry(
+                    Brushes.White, 
+                    new Pen(Brushes.Gray, 1),
+                    geometry);
+            }
+
+            var renderTarget = new RenderTargetBitmap(
+                200, 250, 96, 96, PixelFormats.Pbgra32);
+            renderTarget.Render(drawingVisual);
+            return renderTarget;
         }
 
         [DllImport("gdi32.dll")]
@@ -787,6 +1080,12 @@ namespace RetroUI
         {
             MainContent.Visibility = Visibility.Collapsed;
             MainFrame.Navigate(romHome);
+            
+            // Ensure the RomHome page gets focus for input handling
+            if (MainFrame.Content is RomHome currentRomHome)
+            {
+                currentRomHome.Focus();
+            }
         }
     }
 

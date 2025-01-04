@@ -82,6 +82,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="PlayStationController.cs" />
     <Compile Include="RomHome.xaml.cs">
       <DependentUpon>RomHome.xaml</DependentUpon>
     </Compile>
@@ -90,6 +91,7 @@
       <DependentUpon>SettingsPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="SteamGameMonitor.cs" />
+    <Compile Include="SwitchProController.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
