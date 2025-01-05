@@ -99,6 +99,13 @@ namespace RetroUI
         private bool _isConnected;
         private readonly Timer pollTimer;
         private bool isPS5Controller;
+        private bool _inputDisabled;
+
+        public bool InputDisabled
+        {
+            get => _inputDisabled;
+            set => _inputDisabled = value;
+        }
 
         public bool IsConnected 
         { 
@@ -252,6 +259,14 @@ namespace RetroUI
                     {
                         ParseInputReport(inputBuffer);
                         _isConnected = true;
+                        
+                        // Clear inputs if disabled
+                        if (_inputDisabled)
+                        {
+                            LeftThumbX = 0;
+                            LeftThumbY = 0;
+                            Buttons = PSButtons.None;
+                        }
                     }
                     else
                     {

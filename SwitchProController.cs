@@ -100,6 +100,13 @@ namespace RetroUI
         private readonly byte[] inputBuffer = new byte[64];
         private bool _isConnected;
         private readonly Timer pollTimer;
+        private bool _inputDisabled;
+
+        public bool InputDisabled
+        {
+            get => _inputDisabled;
+            set => _inputDisabled = value;
+        }
 
         public bool IsConnected 
         { 
@@ -271,12 +278,18 @@ namespace RetroUI
                     {
                         ParseInputReport(inputBuffer);
                         _isConnected = true;
-                        Debug.WriteLine("Successfully read Switch Pro Controller input");
+                        
+                        // Clear inputs if disabled
+                        if (_inputDisabled)
+                        {
+                            LeftThumbX = 0;
+                            LeftThumbY = 0;
+                            Buttons = SwitchProButtons.None;
+                        }
                     }
                     else
                     {
                         _isConnected = false;
-                        Debug.WriteLine("Failed to read Switch Pro Controller input");
                     }
                 }
                 catch (Exception ex)

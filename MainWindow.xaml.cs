@@ -32,6 +32,7 @@ namespace RetroUI
         private int currentSelectedIndex = 0;
         private bool isGamepadInitialized = false;
         private Border previousSelectedBorder = null;
+        private bool _showNowPlaying;
         public ObservableCollection<AppInfo> allApps { get; private set; } // Store all apps
         private string currentSearchText = "";
         private AppInfo currentlyPlaying;
@@ -43,6 +44,8 @@ namespace RetroUI
         private bool usingSwitchController = false;
         private PlayStationController psController;
         private bool usingPlayStationController = false;
+        private bool controllerInputDisabled;
+        private bool gameRunningStateChanged;
 
         public ObservableCollection<AppInfo> InstalledApps { get; set; }
 
@@ -54,7 +57,6 @@ namespace RetroUI
                 if (currentlyPlaying != value)
                 {
                     currentlyPlaying = value;
-                    IsGameRunning = value != null; // Update IsGameRunning based on NowPlaying
                     OnPropertyChanged(nameof(NowPlaying));
                 }
             }
@@ -69,6 +71,29 @@ namespace RetroUI
                 if (_isGameRunning != value)
                 {
                     _isGameRunning = value;
+                    
+                    // If game is not running, reset all states
+                    if (!value)
+                    {
+                        currentlyPlaying = null;
+                        _showNowPlaying = false;
+                        OnPropertyChanged(nameof(NowPlaying));
+                        OnPropertyChanged(nameof(ShowNowPlaying));
+                    }
+                    
+                    // Disable/enable controller inputs based on game state
+                    if (psController != null)
+                        psController.InputDisabled = value;
+                    if (switchController != null)
+                        switchController.InputDisabled = value;
+                    if (controller != null)
+                    {
+                        controller.SetVibration(new Vibration { LeftMotorSpeed = 0, RightMotorSpeed = 0 });
+                        Debug.WriteLine($"Xbox controller input disabled: {value}");
+                    }
+                    isGamepadInitialized = !value;
+                    Debug.WriteLine($"Game running state changed: {value}");
+                    
                     OnPropertyChanged(nameof(IsGameRunning));
                 }
             }
@@ -99,7 +124,7 @@ namespace RetroUI
         {
             InitializeComponent();
             InstalledApps = new ObservableCollection<AppInfo>();
-            allApps = new ObservableCollection<AppInfo>(); // Initialize allApps
+            allApps = new ObservableCollection<AppInfo>();
             LoadInstalledApps();
             DataContext = this;
             
@@ -111,21 +136,6 @@ namespace RetroUI
             
             // Add key handler for escape to exit
             KeyDown += MainWindow_KeyDown;
-            
-            // Add this debug code temporarily
-            try
-            {
-                var uri = new Uri("pack://application:,,,/Images/retrohub-logo.png");
-                var bitmap = new BitmapImage(uri);
-                // If this works, the image exists and is accessible
-                Debug.WriteLine("Image loaded successfully");
-            }
-            catch (Exception ex)
-            {
-                // This will help identify the problem
-                Debug.WriteLine($"Error loading image: {ex.Message}");
-                MessageBox.Show($"Error loading image: {ex.Message}");
-            }
             
             // Set up auto-start
             SetupAutoStart();
@@ -368,15 +378,12 @@ namespace RetroUI
                                 }
                                 else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.B))
                                 {
-                                    if (MainContent.Visibility == Visibility.Visible)
+                                    // Open RomHome page when B button is pressed
+                                    Dispatcher.Invoke(() =>
                                     {
                                         var romHome = new RomHome(this);
                                         NavigateToRomHome(romHome);
-                                    }
-                                    else if (MainFrame.Content is RomHome)
-                                    {
-                                        NavigateToMain();
-                                    }
+                                    });
                                 }
                                 else if (gamepad.Buttons.HasFlag(GamepadButtonFlags.Start))
                                 {
@@ -388,6 +395,10 @@ namespace RetroUI
                             lastState = currentState;
                         }
                     }
+                }
+                else
+                {
+                    Debug.WriteLine("Game is running, controller input is disabled.");
                 }
                 
                 await Task.Delay(pollDelay);
@@ -439,24 +450,128 @@ namespace RetroUI
                 var app = InstalledApps[currentSelectedIndex];
                 try
                 {
-                    var process = Process.Start(new ProcessStartInfo(app.Path) { UseShellExecute = true });
+                    var startInfo = new ProcessStartInfo(app.Path) { UseShellExecute = true };
+                    var process = Process.Start(startInfo);
+                    
                     if (process != null)
                     {
+                        // Set all states before starting monitoring
                         NowPlaying = app;
                         IsGameRunning = true;
-                        isGamepadInitialized = false; // Disable gamepad input
+                        ShowNowPlaying = true;
+                        isGamepadInitialized = false;
 
-                        // Start monitoring the game process
-                        gameMonitor.StartMonitoring(process, () =>
+                        // Show input blocking overlay
+                        InputBlockOverlay.Visibility = Visibility.Visible;
+
+                        // Start a background task to monitor the process
+                        Task.Run(async () =>
                         {
-                            // This will be called when the game closes
-                            Dispatcher.Invoke(() =>
+                            try
                             {
-                                NowPlaying = null;
-                                IsGameRunning = false;
-                                isGamepadInitialized = true; // Re-enable gamepad input
-                                InitializeGamepad(); // Reinitialize gamepad
-                            });
+                                var isSteamGame = app.Path.ToLower().Contains("steam");
+                                bool gameIsRunning = true;
+                                Process mainGameProcess = null;
+                                List<Process> gameProcesses = new List<Process>();
+
+                                // For Steam games, wait a bit for the game to actually start
+                                if (isSteamGame)
+                                {
+                                    await Task.Delay(5000); // Wait for Steam to launch the game
+                                    
+                                    // Get initial process list
+                                    var initialProcesses = Process.GetProcesses().ToList();
+                                    
+                                    // Wait a bit more and get new process list
+                                    await Task.Delay(2000);
+                                    var currentProcesses = Process.GetProcesses();
+                                    
+                                    // Find new processes that appeared after Steam launch
+                                    foreach (var proc in currentProcesses)
+                                    {
+                                        try
+                                        {
+                                            if (!initialProcesses.Any(p => p.Id == proc.Id) && 
+                                                proc.MainWindowTitle.Length > 0 && 
+                                                !proc.ProcessName.ToLower().Contains("steam") &&
+                                                !proc.ProcessName.ToLower().Contains("launcher"))
+                                            {
+                                                gameProcesses.Add(proc);
+                                                Debug.WriteLine($"Found game process: {proc.ProcessName}");
+                                            }
+                                        }
+                                        catch { }
+                                    }
+
+                                    if (gameProcesses.Any())
+                                    {
+                                        mainGameProcess = gameProcesses.First();
+                                    }
+                                }
+
+                                while (gameIsRunning)
+                                {
+                                    if (isSteamGame)
+                                    {
+                                        bool anyGameRunning = false;
+                                        
+                                        // Check all game processes
+                                        foreach (var gameProcess in gameProcesses.ToList())
+                                        {
+                                            try
+                                            {
+                                                if (!gameProcess.HasExited)
+                                                {
+                                                    anyGameRunning = true;
+                                                    break;
+                                                }
+                                            }
+                                            catch { }
+                                        }
+                                        
+                                        if (!anyGameRunning)
+                                        {
+                                            gameIsRunning = false;
+                                            break;
+                                        }
+                                    }
+                                    else if (process.HasExited)
+                                    {
+                                        gameIsRunning = false;
+                                        break;
+                                    }
+
+                                    await Task.Delay(1000);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"Error monitoring process: {ex.Message}");
+                            }
+                            finally
+                            {
+                                // Force UI update on the dispatcher with high priority
+                                await Dispatcher.InvokeAsync(() =>
+                                {
+                                    Debug.WriteLine("Game monitoring ended - cleaning up UI state");
+                                    currentlyPlaying = null;
+                                    _isGameRunning = false;
+                                    _showNowPlaying = false;
+                                    OnPropertyChanged(nameof(NowPlaying));
+                                    OnPropertyChanged(nameof(IsGameRunning));
+                                    OnPropertyChanged(nameof(ShowNowPlaying));
+                                    
+                                    isGamepadInitialized = true;
+                                    if (psController != null)
+                                        psController.InputDisabled = false;
+                                    if (switchController != null)
+                                        switchController.InputDisabled = false;
+                                    InitializeGamepad();
+                                    InputBlockOverlay.Visibility = Visibility.Collapsed;
+                                    
+                                    Debug.WriteLine("All states have been reset");
+                                }, System.Windows.Threading.DispatcherPriority.Send);
+                            }
                         });
                     }
                 }
@@ -466,10 +581,34 @@ namespace RetroUI
                         "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     NowPlaying = null;
                     IsGameRunning = false;
+                    ShowNowPlaying = false;
                     isGamepadInitialized = true;
                     InitializeGamepad();
+                    InputBlockOverlay.Visibility = Visibility.Collapsed;
                 }
             }
+        }
+
+        private bool IsSteamGameRunning()
+        {
+            try
+            {
+                // Check Steam's running_app_id file
+                string steamPath = GetSteamPath();
+                if (string.IsNullOrEmpty(steamPath)) return false;
+
+                string runningAppPath = Path.Combine(steamPath, "steam_running.txt");
+                if (File.Exists(runningAppPath))
+                {
+                    string content = File.ReadAllText(runningAppPath);
+                    return !string.IsNullOrWhiteSpace(content);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error checking Steam game status: {ex.Message}");
+            }
+            return false;
         }
 
         private string GetSteamAppId(string path)
@@ -492,11 +631,18 @@ namespace RetroUI
             InstalledApps.Clear();
             allApps.Clear();
 
-            // First, try to load Steam games
+            // Load Steam games
             LoadSteamGames();
 
-            // Then load other games as before...
-            // (keep your existing game directory scanning code)
+            // Load other games as needed
+            // Ensure no duplicates are added
+            foreach (var app in allApps)
+            {
+                if (!InstalledApps.Any(existingApp => existingApp.Path.Equals(app.Path, StringComparison.OrdinalIgnoreCase)))
+                {
+                    InstalledApps.Add(app);
+                }
+            }
         }
 
         private void LoadSteamGames()
@@ -603,21 +749,25 @@ namespace RetroUI
                     string gameDir = Path.Combine(steamAppsPath, "common", installDir);
                     if (Directory.Exists(gameDir))
                     {
-                        // Find the main game executable
                         var exeFiles = Directory.GetFiles(gameDir, "*.exe", SearchOption.AllDirectories)
                             .Where(exe => !IsExcludedExecutable(exe))
                             .OrderByDescending(exe => new FileInfo(exe).Length);
 
-                        foreach (var exe in exeFiles.Take(1)) // Take the largest exe file
+                        foreach (var exe in exeFiles.Take(1))
                         {
-                            var icon = GetAppIcon(exe);
-                            if (icon != null)
+                            var boxArt = GetGameBoxArt(exe);
+                            var bannerPath = GetBannerPath(exe);
+
+                            if (boxArt != null)
                             {
                                 var appInfo = new AppInfo
                                 {
-                                    Name = gameName, // Use the name from Steam manifest
-                                    Icon = icon,
-                                    Path = exe
+                                    Name = gameName,
+                                    Icon = GetAppIcon(exe),
+                                    BoxArt = boxArt,
+                                    Path = exe,
+                                    LastPlayed = GetLastPlayedTime(exe),
+                                    Banner = bannerPath
                                 };
 
                                 if (!InstalledApps.Any(app => app.Path.Equals(appInfo.Path, StringComparison.OrdinalIgnoreCase)))
@@ -665,8 +815,10 @@ namespace RetroUI
                     var appInfo = new AppInfo
                     {
                         Name = Path.GetFileNameWithoutExtension(exePath),
-                        Icon = boxArt,
-                        Path = exePath
+                        Icon = GetAppIcon(exePath),
+                        BoxArt = boxArt,
+                        Path = exePath,
+                        LastPlayed = GetLastPlayedTime(exePath)
                     };
 
                     // Check if this game is already added (avoid duplicates)
@@ -681,6 +833,18 @@ namespace RetroUI
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error processing executable {exePath}: {ex.Message}");
+            }
+        }
+
+        private DateTime? GetLastPlayedTime(string exePath)
+        {
+            try
+            {
+                return File.GetLastAccessTime(exePath);
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -776,14 +940,14 @@ namespace RetroUI
                         using (var bitmap = new System.Drawing.Bitmap(imagePath))
                         {
                             // Create a high-quality resized version
-                            using (var resized = new System.Drawing.Bitmap(200, 250))
+                            using (var resized = new System.Drawing.Bitmap(300, 300))
                             {
                                 using (var graphics = System.Drawing.Graphics.FromImage(resized))
                                 {
                                     graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                                     graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                                     graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                                    graphics.DrawImage(bitmap, 0, 0, 200, 250);
+                                    graphics.DrawImage(bitmap, 0, 0, 300, 300);
 
                                     var handle = resized.GetHbitmap();
                                     try
@@ -792,7 +956,7 @@ namespace RetroUI
                                             handle,
                                             IntPtr.Zero,
                                             Int32Rect.Empty,
-                                            BitmapSizeOptions.FromWidthAndHeight(200, 250));
+                                            BitmapSizeOptions.FromWidthAndHeight(300, 300));
                                     }
                                     finally
                                     {
@@ -1087,13 +1251,80 @@ namespace RetroUI
                 currentRomHome.Focus();
             }
         }
+
+        public bool ShowNowPlaying
+        {
+            get => _showNowPlaying;
+            set
+            {
+                if (_showNowPlaying != value)
+                {
+                    _showNowPlaying = value;
+                    OnPropertyChanged(nameof(ShowNowPlaying));
+                }
+            }
+        }
+
+        private string GetBannerPath(string exePath)
+        {
+            try
+            {
+                // Assuming the banner image is located in the same directory as the executable
+                string gameDir = Path.GetDirectoryName(exePath);
+                string gameName = Path.GetFileNameWithoutExtension(exePath);
+
+                // Common banner file names
+                string[] possibleBannerNames = new[]
+                {
+                    "banner.jpg", "banner.png",
+                    $"{gameName}_banner.jpg", $"{gameName}_banner.png"
+                };
+
+                // Check for existing banner in the game directory
+                foreach (string bannerName in possibleBannerNames)
+                {
+                    string bannerPath = Path.Combine(gameDir, bannerName);
+                    if (File.Exists(bannerPath))
+                    {
+                        return bannerPath; // Return the first found banner path
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error getting banner path for {exePath}: {ex.Message}");
+            }
+
+            // Return null if no banner found
+            return null;
+        }
+
+        private void OnGameClosed()
+        {
+            Debug.WriteLine("OnGameClosed called - resetting all states");
+            
+            // Reset all states in the correct order
+            IsGameRunning = false;  // This will trigger the property setter which handles other states
+            
+            // Re-initialize gamepad
+            isGamepadInitialized = true;
+            InitializeGamepad();
+            
+            Debug.WriteLine("All states reset");
+        }
     }
 
     public class AppInfo
     {
         public string Name { get; set; }
         public BitmapSource Icon { get; set; }
+        public BitmapSource BoxArt { get; set; }
         public string Path { get; set; }
+        public DateTime? LastPlayed { get; set; }
+        
+        // Add these properties
+        public string PlayTime { get; set; } // Assuming PlayTime is a string, adjust type as needed
+        public string Banner { get; set; } // Assuming Banner is a string path to the image
     }
 
     // Extension method for scrolling
