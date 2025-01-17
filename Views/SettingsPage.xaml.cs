@@ -1,4 +1,5 @@
 using SharpDX.XInput;
+using Microsoft.Win32;
 
 namespace RetroHub.Views;
 
@@ -12,6 +13,7 @@ public partial class SettingsPage : ContentPage, IDisposable
     {
         InitializeComponent();
         InitializeGamepad();
+        LoadStartupSetting();
     }
 
     private void InitializeGamepad()
@@ -38,6 +40,30 @@ public partial class SettingsPage : ContentPage, IDisposable
                 {
                     await Shell.Current.GoToAsync("..");
                 });
+            }
+        }
+    }
+
+    private void LoadStartupSetting()
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+        {
+            StartupSwitch.IsToggled = key?.GetValue("RetroHub") != null;
+        }
+    }
+
+    private void OnStartupSwitchToggled(object sender, ToggledEventArgs e)
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+        {
+            if (e.Value)
+            {
+                string appPath = AppDomain.CurrentDomain.BaseDirectory + "RetroHub.exe";
+                key?.SetValue("RetroHub", appPath);
+            }
+            else
+            {
+                key?.DeleteValue("RetroHub", false);
             }
         }
     }

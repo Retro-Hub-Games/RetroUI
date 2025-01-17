@@ -98,7 +98,7 @@
                                                            Margin="10,0,10,20"
                                                            IsVisible="{Binding LogoImage, Converter={StaticResource NotNullConverter}}"/>
                                                     <!-- Game Name (shown if no logo) -->
-                                                    <Label Text="{Binding Name}"
+                                                    <!-- <Label Text="{Binding Name}"
                                                            IsVisible="{Binding LogoImage, Converter={StaticResource NullConverter}}"
                                                            TextColor="White"
                                                            FontSize="18"
@@ -106,7 +106,7 @@
                                                            VerticalOptions="End"
                                                            Margin="15,0,15,20"
                                                            MaxLines="2"
-                                                           LineBreakMode="TailTruncation"/>
+                                                           LineBreakMode="TailTruncation"/> -->
                                                 </Grid>
                                             </Border>
                                             <!-- Game Info Section -->
@@ -116,11 +116,11 @@
                                                   RowDefinitions="Auto">
                                                 <Label Text="{Binding Name}"
                                                        TextColor="White"
-                                                       FontSize="16"
+                                                       FontSize="12"
                                                        FontAttributes="Bold"
                                                        HorizontalOptions="Start"
                                                        VerticalOptions="Center"
-                                                       MaxLines="2"
+                                                       MaxLines="1"
                                                        LineBreakMode="TailTruncation"/>
                                             </Grid>
                                         </Grid>
