@@ -1,0 +1,12 @@
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Retrohub.csproj.AssemblyReference.cache
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\mauiimage.inputs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\mauifont.inputs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\mauisplash.inputs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\mauimanifest.stamp
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Platforms\Windows\App.g.i.cs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Platforms\Windows\App.g.cs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\XamlTypeInfo.g.cs
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Platforms\Windows\App.xaml
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Platforms\Windows\App.xbf
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\XamlSaveStateFile.xml
+c:\Users\JailBreak\source\repos\Retrohub\obj\Release\net9.0-windows10.0.19041.0\win10-x64\Retrohub.GeneratedMSBuildEditorConfig.editorconfig

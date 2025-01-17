@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:RetroHub"
+             xmlns:models="clr-namespace:RetroHub.Models"
+             xmlns:converters="clr-namespace:RetroHub.Converters"
+             x:Class="RetroHub.MainPage"
+             x:DataType="local:MainPage"
+             Title="RetroHub"
+             BackgroundColor="Transparent">
+
+    <ContentPage.Resources>
+        <StyleSheet>
+            <![CDATA[
+                .gradient-background {
+                    background: linear-gradient(45deg, #1A1A1A, #0D0D0D);
+                }
+            ]]>
+        </StyleSheet>
+        
+        <!-- Value Converters -->
+        <converters:NotNullToBooleanConverter x:Key="NotNullConverter" />
+        <converters:NullToBooleanConverter x:Key="NullConverter" />
+    </ContentPage.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Search Bar -->
+        <SearchBar x:Name="SearchBar"
+                   Grid.Row="0" 
+                   Placeholder="Search games..."
+                   TextChanged="OnSearchTextChanged"
+                   Margin="10"
+                   IsVisible="{Binding IsSearchVisible}"/>
+
+        <!-- Main ScrollView -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="15" Padding="10">
+                <!-- Games Collection -->
+                <ScrollView x:Name="GamesScrollView" Orientation="Horizontal">
+                    <CollectionView x:Name="GamesCollection"
+                                  ItemsSource="{Binding InstalledApps}"
+                                  SelectionMode="Single"
+                                  SelectionChanged="OnGameSelectionChanged">
+                        <CollectionView.ItemsLayout>
+                            <LinearItemsLayout Orientation="Horizontal"
+                                             ItemSpacing="15" />
+                        </CollectionView.ItemsLayout>
+
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="models:GameInfo">
+                                <Frame x:Name="GameCard" BackgroundColor="#1E1E1E"
+                                       Padding="0"
+                                       Margin="5"
+                                       WidthRequest="280"
+                                       HeightRequest="400"
+                                       CornerRadius="15"
+                                       HasShadow="True">
+                                    <Border StrokeThickness="0"
+                                           BackgroundColor="#1E1E1E"
+                                           StrokeShape="RoundRectangle 15">
+                                        <Border.GestureRecognizers>
+                                            <TapGestureRecognizer Tapped="AppCard_Tapped"/>
+                                        </Border.GestureRecognizers>
+                                        <Grid RowDefinitions="*, Auto" RowSpacing="0">
+                                            <Border Grid.Row="0"
+                                                    StrokeThickness="0"
+                                                    StrokeShape="RoundRectangle 15,15,0,0"
+                                                    Padding="0"
+                                                    HeightRequest="320">
+                                                <!-- Game Artwork -->
+                                                <Grid>
+                                                    <!-- Background Image -->
+                                                    <Image Source="{Binding BackgroundImage}"
+                                                           Aspect="AspectFill"
+                                                           HeightRequest="320"
+                                                           WidthRequest="280"
+                                                           Opacity="0.6"/>
+                                                    <!-- Hero Image -->
+                                                    <Image Source="{Binding HeroImage}"
+                                                           Aspect="AspectFill"
+                                                           HeightRequest="320"
+                                                           WidthRequest="280"/>
+                                                    <!-- Gradient Overlay -->
+                                                    <BoxView VerticalOptions="End"
+                                                            HeightRequest="160">
+                                                        <BoxView.Background>
+                                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                                <GradientStop Color="Transparent" Offset="0.0" />
+                                                                <GradientStop Color="#CC000000" Offset="1.0" />
+                                                            </LinearGradientBrush>
+                                                        </BoxView.Background>
+                                                    </BoxView>
+                                                    <!-- Logo Image -->
+                                                    <Image Source="{Binding LogoImage}"
+                                                           Aspect="AspectFit"
+                                                           HeightRequest="80"
+                                                           VerticalOptions="End"
+                                                           Margin="10,0,10,20"
+                                                           IsVisible="{Binding LogoImage, Converter={StaticResource NotNullConverter}}"/>
+                                                    <!-- Game Name (shown if no logo) -->
+                                                    <Label Text="{Binding Name}"
+                                                           IsVisible="{Binding LogoImage, Converter={StaticResource NullConverter}}"
+                                                           TextColor="White"
+                                                           FontSize="18"
+                                                           FontAttributes="Bold"
+                                                           VerticalOptions="End"
+                                                           Margin="15,0,15,20"
+                                                           MaxLines="2"
+                                                           LineBreakMode="TailTruncation"/>
+                                                </Grid>
+                                            </Border>
+                                            <!-- Game Info Section -->
+                                            <Grid Grid.Row="1" 
+                                                  Padding="15"
+                                                  BackgroundColor="#2A2A2A"
+                                                  RowDefinitions="Auto">
+                                                <Label Text="{Binding Name}"
+                                                       TextColor="White"
+                                                       FontSize="16"
+                                                       FontAttributes="Bold"
+                                                       HorizontalOptions="Start"
+                                                       VerticalOptions="Center"
+                                                       MaxLines="2"
+                                                       LineBreakMode="TailTruncation"/>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                </Frame>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </ScrollView>
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <!-- Utility Cards -->
+        <Grid Grid.Row="2" ColumnDefinitions="*,*,*" ColumnSpacing="15" Margin="10" HeightRequest="80">
+            <!-- Settings Card -->
+            <Frame Grid.Column="0"
+                   BackgroundColor="#1E1E1E"
+                   Padding="15"
+                   CornerRadius="15"
+                   HasShadow="True"
+                   x:Name="SettingsCard">
+                <Image Source="settings.png"
+                       HeightRequest="40"
+                       HorizontalOptions="Center"
+                       VerticalOptions="Center"/>
+                <Frame.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="Settings_Tapped"/>
+                </Frame.GestureRecognizers>
+            </Frame>
+
+            <!-- Store Card -->
+            <Frame Grid.Column="1"
+                   BackgroundColor="#1E1E1E"
+                   Padding="15"
+                   CornerRadius="15"
+                   HasShadow="True"
+                   x:Name="StoreCard">
+                <Image Source="store.png"
+                       HeightRequest="40"
+                       HorizontalOptions="Center"
+                       VerticalOptions="Center"/>
+                <Frame.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="Store_Tapped"/>
+                </Frame.GestureRecognizers>
+            </Frame>
+
+            <!-- Power Card -->
+            <Frame Grid.Column="2"
+                   BackgroundColor="#1E1E1E"
+                   Padding="15"
+                   CornerRadius="15"
+                   HasShadow="True"
+                   x:Name="PowerCard">
+                <Image Source="power.png"
+                       HeightRequest="40"
+                       HorizontalOptions="Center"
+                       VerticalOptions="Center"/>
+                <Frame.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="Power_Tapped"/>
+                </Frame.GestureRecognizers>
+            </Frame>
+        </Grid>
+    </Grid>
+</ContentPage>
